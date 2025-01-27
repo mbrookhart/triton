@@ -184,10 +184,6 @@ DotOpMmaV3SmemLoader loadA(const LLVMTypeConverter *typeConverter,
   // The descriptor should be calculated based on the first warp of the
   // warpgroup.
   Value warp = and_(udiv(thread, i32_val(32)), i32_val(0xFFFFFFFC));
-  // Workaround for a bug in ptxas 12.3 that cause a failure in
-  // test_core.py::test_dot. The shuffle will force the compiler to treat the
-  // value as uniform and prevent wrong optimizations.
-  warp = mlir::LLVM::NVIDIA::shuffleIdx(loc, rewriter, warp, 0);
   Value warpM = urem(warp, i32_val(wpt[0]));
   Value warpId = urem(warpM, i32_val(shapePerCTA[0] / instrShape[0]));
 
