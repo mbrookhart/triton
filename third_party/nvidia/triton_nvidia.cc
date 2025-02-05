@@ -62,7 +62,7 @@ void init_triton_nvidia(py::module &&m) {
   init_triton_nvidia_passes_ttnvgpuir(passes.def_submodule("ttnvgpuir"));
 
   // cluster info
-  py::class_<mlir::triton::nvidia_gpu::ClusterInfo>(m, "ClusterInfo")
+  py::class_<mlir::triton::nvidia_gpu::ClusterInfo>(m, "ClusterInfo", py::module_local())
       .def(py::init<>())
       .def_readwrite("clusterDimX",
                      &mlir::triton::nvidia_gpu::ClusterInfo::clusterDimX)
@@ -118,7 +118,7 @@ void init_triton_nvidia(py::module &&m) {
   // cublas
   auto cublas = m.def_submodule("cublas");
 
-  py::class_<CublasLtInstance>(cublas, "CublasLt")
+  py::class_<CublasLtInstance>(cublas, "CublasLt", py::module_local())
       .def(py::init<>([&](py::object &workspace) {
         auto wrk_ptr = workspace.attr("data_ptr")().cast<uint64_t>();
         auto wrk_size = workspace.attr("numel")().cast<size_t>() *
