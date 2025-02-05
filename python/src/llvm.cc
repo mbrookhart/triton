@@ -1,4 +1,4 @@
-﻿#include "mlir/IR/BuiltinOps.h" // mlir::ModuleOp
+#include "mlir/IR/BuiltinOps.h" // mlir::ModuleOp
 #include "mlir/Target/LLVMIR/LLVMTranslationInterface.h"
 #include "mlir/Target/LLVMIR/ModuleTranslation.h"
 #include "triton/Tools/Sys/GetEnv.hpp"
@@ -166,7 +166,7 @@ void init_triton_llvm(py::module &&m) {
   py::class_<llvm::SourceMgr>(m, "source_mgr", py::module_local())
       .def(py::init<>());
 
-  py::class_<llvm::Module::FunctionListType>(m, "function_list")
+  py::class_<llvm::Module::FunctionListType>(m, "function_list", py::module_local())
       .def(
           "__iter__",
           [](llvm::Module::FunctionListType &s) {

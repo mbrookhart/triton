@@ -79,7 +79,7 @@ class BackendInstaller:
         for file in ["compiler.py", "driver.py"]:
             assert os.path.exists(os.path.join(backend_path, file)), f"${file} does not exist in ${backend_path}"
 
-        install_dir = os.path.join(os.path.dirname(__file__), "triton", "backends", backend_name)
+        install_dir = os.path.join(os.path.dirname(__file__), "triton2", "backends", backend_name)
         package_data = [f"{os.path.relpath(p, backend_path)}/*" for p, _, _, in os.walk(backend_path)]
 
         language_package_data = []
@@ -594,7 +594,7 @@ def add_link_to_backends():
         if backend.language_dir:
             # Link the contents of each backend's `language` directory into
             # `triton.language.extra`.
-            extra_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "triton", "language", "extra"))
+            extra_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "triton2", "language", "extra"))
             for x in os.listdir(backend.language_dir):
                 src_dir = os.path.join(backend.language_dir, x)
                 install_dir = os.path.join(extra_dir, x)
@@ -603,7 +603,7 @@ def add_link_to_backends():
         if backend.tools_dir:
             # Link the contents of each backend's `tools` directory into
             # `triton.tools.extra`.
-            extra_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "triton", "tools", "extra"))
+            extra_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "triton2", "tools", "extra"))
             for x in os.listdir(backend.tools_dir):
                 src_dir = os.path.join(backend.tools_dir, x)
                 install_dir = os.path.join(extra_dir, x)
@@ -612,7 +612,7 @@ def add_link_to_backends():
 
 def add_link_to_proton():
     proton_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, "third_party", "proton", "proton"))
-    proton_install_dir = os.path.join(os.path.dirname(__file__), "triton", "profiler")
+    proton_install_dir = os.path.join(os.path.dirname(__file__), "triton2", "profiler")
     update_symlink(proton_install_dir, proton_dir)
 
 
@@ -651,9 +651,9 @@ class plugin_egginfo(egg_info):
 
 
 package_data = {
-    "triton/tools/extra": sum((b.tools_package_data for b in backends), []),
-    **{f"triton/backends/{b.name}": b.package_data
-       for b in backends}, "triton/language/extra": sum((b.language_package_data for b in backends), [])
+    "triton2/tools/extra": sum((b.tools_package_data for b in backends), []),
+    **{f"triton2/backends/{b.name}": b.package_data
+       for b in backends}, "triton2/language/extra": sum((b.language_package_data for b in backends), [])
 }
 
 
@@ -675,7 +675,7 @@ def get_extra_packages(extra_name):
                 # or the root directory
                 continue
             subpackage = os.path.relpath(dir, backend_extra_dir)
-            package = os.path.join(f"triton/{extra_name}/extra", subpackage)
+            package = os.path.join(f"triton2/{extra_name}/extra", subpackage)
             packages.append(package)
 
     return list(packages)
@@ -683,21 +683,21 @@ def get_extra_packages(extra_name):
 
 def get_packages():
     packages = [
-        "triton",
-        "triton/_C",
-        "triton/compiler",
-        "triton/language",
-        "triton/language/extra",
-        "triton/runtime",
-        "triton/backends",
-        "triton/tools",
-        "triton/tools/extra",
+        "triton2",
+        "triton2/_C",
+        "triton2/compiler",
+        "triton2/language",
+        "triton2/language/extra",
+        "triton2/runtime",
+        "triton2/backends",
+        "triton2/tools",
+        "triton2/tools/extra",
     ]
-    packages += [f'triton/backends/{backend.name}' for backend in backends]
+    packages += [f'triton2/backends/{backend.name}' for backend in backends]
     packages += get_extra_packages("language")
     packages += get_extra_packages("tools")
     if check_env_flag("TRITON_BUILD_PROTON", "ON"):  # Default ON
-        packages += ["triton/profiler"]
+        packages += ["triton2/profiler"]
 
     return packages
 
@@ -706,8 +706,8 @@ def get_entry_points():
     entry_points = {}
     if check_env_flag("TRITON_BUILD_PROTON", "ON"):  # Default ON
         entry_points["console_scripts"] = [
-            "proton-viewer = triton.profiler.viewer:main",
-            "proton = triton.profiler.proton:main",
+            "proton-viewer = triton2.profiler.viewer:main",
+            "proton = triton2.profiler.proton:main",
         ]
     return entry_points
 
@@ -721,7 +721,7 @@ def get_git_commit_hash(length=8):
 
 
 setup(
-    name=os.environ.get("TRITON_WHEEL_NAME", "triton"),
+    name=os.environ.get("TRITON_WHEEL_NAME", "triton2"),
     version="3.2.0" + get_git_commit_hash() + os.environ.get("TRITON_WHEEL_VERSION_SUFFIX", ""),
     author="Philippe Tillet",
     author_email="phil@openai.com",
@@ -732,7 +732,7 @@ setup(
     entry_points=get_entry_points(),
     package_data=package_data,
     include_package_data=True,
-    ext_modules=[CMakeExtension("triton", "triton/_C/")],
+    ext_modules=[CMakeExtension("triton2", "triton2/_C/")],
     cmdclass={
         "build_ext": CMakeBuild,
         "build_py": CMakeBuildPy,
