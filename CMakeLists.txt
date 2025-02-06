@@ -12,7 +12,7 @@ set(CMAKE_CXX_STANDARD 17)
 
 set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
-project(triton CXX C)
+project(triton2 CXX C)
 include(CTest)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
@@ -280,22 +280,22 @@ if(TRITON_BUILD_PYTHON_MODULE)
 
   set(TRITON_BACKENDS_TUPLE "(${TRITON_BACKENDS_TUPLE})")
   add_compile_definitions(TRITON_BACKENDS_TUPLE=${TRITON_BACKENDS_TUPLE})
-  add_library(triton SHARED ${PYTHON_SRC_PATH}/main.cc
+  add_library(triton2 SHARED ${PYTHON_SRC_PATH}/main.cc
                   ${PYTHON_SRC_PATH}/ir.cc
                   ${PYTHON_SRC_PATH}/passes.cc
                   ${PYTHON_SRC_PATH}/interpreter.cc
                   ${PYTHON_SRC_PATH}/llvm.cc)
 
   # Link triton with its dependencies
-  target_link_libraries(triton PRIVATE ${TRITON_LIBRARIES})
+  target_link_libraries(triton2 PRIVATE ${TRITON_LIBRARIES})
   if(WIN32)
-    target_link_libraries(triton PRIVATE ${CMAKE_DL_LIBS})
-    set_target_properties(triton PROPERTIES SUFFIX ".pyd")
-    set_target_properties(triton PROPERTIES PREFIX "lib")
+    target_link_libraries(triton2 PRIVATE ${CMAKE_DL_LIBS})
+    set_target_properties(triton2 PROPERTIES SUFFIX ".pyd")
+    set_target_properties(triton2 PROPERTIES PREFIX "lib")
   else()
-    target_link_libraries(triton PRIVATE z)
+    target_link_libraries(triton2 PRIVATE z)
   endif()
-  target_link_options(triton PRIVATE ${LLVM_LDFLAGS})
+  target_link_options(triton2 PRIVATE ${LLVM_LDFLAGS})
 endif()
 
 if (UNIX AND NOT APPLE)
@@ -310,7 +310,7 @@ if(TRITON_BUILD_PYTHON_MODULE AND NOT WIN32)
     set(PYTHON_LDFLAGS "-undefined dynamic_lookup")
   endif()
 
-  target_link_options(triton PRIVATE ${PYTHON_LDFLAGS})
+  target_link_options(triton2 PRIVATE ${PYTHON_LDFLAGS})
 endif()
 
 if(NOT TRITON_BUILD_PYTHON_MODULE)
