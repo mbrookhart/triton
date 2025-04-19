@@ -448,3 +448,20 @@ int mlir::triton::getNumStagesOrDefault(scf::ForOp forOp,
     return attr.getInt();
   return defaultNumStages;
 }
+
+Type mlir::triton::createViewType(mlir::Type allocType, bool mut) {
+  assert(isa<triton::gpu::MemDescType>(alloc.getType()) &&
+         "Expected MemDescType");
+  auto allocDescType = cast<triton::gpu::MemDescType>(allocType);
+  llvm::errs() << allocDescType << '\n';
+  SmallVector<int64_t> shape;
+  if (allocDescType.getShape().size() > 1) {
+    shape.insert(shape.end(), allocDescType.getShape().begin() + 1,
+                 allocDescType.getShape().end());
+  } else {
+    shape.push_back(1);
+  }
+  return triton::gpu::MemDescType::get(shape, allocDescType.getElementType(),
+                                       allocDescType.getEncoding(),
+                                       allocDescType.getMemorySpace(), mut);
+}

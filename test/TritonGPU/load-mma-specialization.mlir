@@ -426,7 +426,8 @@ tt.func @matmul_tma_acc_with_conditional_user(
   %c1_i32 = arith.constant 1 : i32
   %true = arith.constant true
   %zero = arith.constant dense<0.0> : tensor<128x128xf32, #acc_layout>
-  %k_tiles = arith.constant 32 : i32
+  %tot_tiles = arith.constant 32 : i32
+  %k_tiles = arith.constant 8 : i32
 
   // CHECK-COUNT-3: ttg.local_alloc : () -> !ttg.memdesc<2xi64
 
@@ -440,7 +441,7 @@ tt.func @matmul_tma_acc_with_conditional_user(
   // CHECK-SAME: [[MMA_PHASE:%arg[0-9]+]] = %c0_i32
   // CHECK-SAME: [[ACC_INDEX:%arg[0-9]+]] = %c0_i32
   // CHECK-SAME: [[ACC_PHASE:%arg[0-9]+]] = %c0_i32
-  scf.for %k = %c0_i32 to %k_tiles step %c1_i32 iter_args(%acc = %zero) -> tensor<128x128xf32, #acc_layout> : i32 {
+  scf.for %k = %c0_i32 to %tot_tiles step %c1_i32 iter_args(%acc = %zero) -> tensor<128x128xf32, #acc_layout> : i32 {
     // CHECK-NEXT: [[CUR_ACC_EMPTY_BAR:%.*]] = ttg.memdesc_subview [[ACC_EMPTY_BUFS]][[[ACC_INDEX]]]
     // CHECK-NEXT: [[CUR_ACC_READY_BAR:%.*]] = ttg.memdesc_subview [[ACC_READY_BUFS]][[[ACC_INDEX]]]
 
@@ -470,7 +471,9 @@ tt.func @matmul_tma_acc_with_conditional_user(
     // CHECK-NEXT: [[ACC_RESET:%.*]] = "acc_reset"
     %acc_reset = "acc_reset"() : () -> tensor<128x128xf32, #acc_layout>
     // CHECK-NEXT: [[DO_EPILOGUE:%.*]] = "epilogue_cond"([[K]])
-    %do_epilogue = "epilogue_cond"(%k) : (i32) -> i1
+    %rem = arith.remsi %k, %k_tiles : i32
+    %last = arith.subi %k_tiles, %c1_i32 : i32
+    %do_epilogue = arith.cmpi eq, %rem, %last : i32
 
     // CHECK-NEXT: ttng.arrive_barrier [[CUR_ACC_READY_BAR]], 1, [[DO_EPILOGUE]] {ttg.partition = 3 : i32}
     // CHECK-NEXT: ttng.wait_barrier [[CUR_ACC_EMPTY_BAR]], [[ACC_PHASE]], [[DO_EPILOGUE]] {ttg.partition = 1 : i32}
@@ -529,7 +532,8 @@ tt.func @matmul_tma_acc_with_conditional_def(
   %c1_i32 = arith.constant 1 : i32
   %true = arith.constant true
   %zero = arith.constant dense<0.0> : tensor<128x128xf32, #acc_layout>
-  %k_tiles = arith.constant 32 : i32
+  %tot_tiles = arith.constant 32 : i32
+  %k_tiles = arith.constant 8 : i32
 
   // CHECK-COUNT-3: ttg.local_alloc : () -> !ttg.memdesc<2xi64
 
@@ -543,7 +547,7 @@ tt.func @matmul_tma_acc_with_conditional_def(
   // CHECK-SAME: [[MMA_PHASE:%arg[0-9]+]] = %c0_i32
   // CHECK-SAME: [[ACC_INDEX:%arg[0-9]+]] = %c0_i32
   // CHECK-SAME: [[ACC_PHASE:%arg[0-9]+]] = %c0_i32
-  scf.for %k = %c0_i32 to %k_tiles step %c1_i32 iter_args(%acc = %zero) -> tensor<128x128xf32, #acc_layout> : i32 {
+  scf.for %k = %c0_i32 to %tot_tiles step %c1_i32 iter_args(%acc = %zero) -> tensor<128x128xf32, #acc_layout> : i32 {
     // CHECK-NEXT: [[CUR_ACC_EMPTY_BAR:%.*]] = ttg.memdesc_subview [[ACC_EMPTY_BUFS]][[[ACC_INDEX]]]
     // CHECK-NEXT: [[CUR_ACC_READY_BAR:%.*]] = ttg.memdesc_subview [[ACC_READY_BUFS]][[[ACC_INDEX]]]
 
@@ -574,7 +578,9 @@ tt.func @matmul_tma_acc_with_conditional_def(
     // CHECK-NEXT: ttng.wait_barrier [[CUR_ACC_EMPTY_BAR]], [[ACC_PHASE]], %true {ttg.partition = 1 : i32}
 
     // CHECK-NEXT: [[DO_EPILOGUE:%.*]] = "epilogue_cond"([[K]])
-    %do_epilogue = "epilogue_cond"(%k) : (i32) -> i1
+    %rem = arith.remsi %k, %k_tiles : i32
+    %last = arith.subi %k_tiles, %c1_i32 : i32
+    %do_epilogue = arith.cmpi eq, %rem, %last : i32
     %acc_reset = arith.select %do_epilogue, %zero, %c : tensor<128x128xf32, #acc_layout>
 
     // CHECK-NEXT: ttng.wait_barrier [[CUR_ACC_READY_BAR]], [[ACC_PHASE]] {ttg.partition = 0 : i32}
@@ -628,7 +634,8 @@ tt.func @matmul_tma_acc_with_conditional_def_and_use(
   %c1_i32 = arith.constant 1 : i32
   %true = arith.constant true
   %zero = arith.constant dense<0.0> : tensor<128x128xf32, #acc_layout>
-  %k_tiles = arith.constant 32 : i32
+  %tot_tiles = arith.constant 32 : i32
+  %k_tiles = arith.constant 8 : i32
 
   // CHECK-COUNT-3: ttg.local_alloc : () -> !ttg.memdesc<2xi64
 
@@ -642,7 +649,7 @@ tt.func @matmul_tma_acc_with_conditional_def_and_use(
   // CHECK-SAME: [[MMA_PHASE:%arg[0-9]+]] = %c0_i32
   // CHECK-SAME: [[ACC_INDEX:%arg[0-9]+]] = %c0_i32
   // CHECK-SAME: [[ACC_PHASE:%arg[0-9]+]] = %c0_i32
-  scf.for %k = %c0_i32 to %k_tiles step %c1_i32 iter_args(%acc = %zero) -> tensor<128x128xf32, #acc_layout> : i32 {
+  scf.for %k = %c0_i32 to %tot_tiles step %c1_i32 iter_args(%acc = %zero) -> tensor<128x128xf32, #acc_layout> : i32 {
     // CHECK-NEXT: [[CUR_ACC_EMPTY_BAR:%.*]] = ttg.memdesc_subview [[ACC_EMPTY_BUFS]][[[ACC_INDEX]]]
     // CHECK-NEXT: [[CUR_ACC_READY_BAR:%.*]] = ttg.memdesc_subview [[ACC_READY_BUFS]][[[ACC_INDEX]]]
 
@@ -670,7 +677,9 @@ tt.func @matmul_tma_acc_with_conditional_def_and_use(
     // CHECK-NEXT: ttng.arrive_barrier {{.*}} {ttg.partition = 3 : i32}
 
     // CHECK-NEXT: [[DO_EPILOGUE:%.*]] = "epilogue_cond"([[K]])
-    %do_epilogue = "epilogue_cond"(%k) : (i32) -> i1
+    %rem = arith.remsi %k, %k_tiles : i32
+    %last = arith.subi %k_tiles, %c1_i32 : i32
+    %do_epilogue = arith.cmpi eq, %rem, %last : i32
     // CHECK-NEXT: ttng.arrive_barrier [[CUR_ACC_READY_BAR]], 1, [[DO_EPILOGUE]] {ttg.partition = 3 : i32}
     // CHECK-NEXT: ttng.wait_barrier [[CUR_ACC_EMPTY_BAR]], [[ACC_PHASE]], [[DO_EPILOGUE]] {ttg.partition = 1 : i32}
     %acc_reset = arith.select %do_epilogue, %zero, %c : tensor<128x128xf32, #acc_layout>
@@ -733,7 +742,8 @@ tt.func @matmul_tma_acc_with_conditional_def_and_use_no_multibuf_flag(
   %true = arith.constant true
   %false = arith.constant false
   %zero = arith.constant dense<0.0> : tensor<128x128xf32, #acc_layout>
-  %k_tiles = arith.constant 32 : i32
+  %tot_tiles = arith.constant 32 : i32
+  %k_tiles = arith.constant 8 : i32
 
   // CHECK:      [[ACC_BUFS:%.*]] = ttng.tmem_alloc : () -> !ttg.memdesc<1x128x128xf32, [[ACC_TMEM]], #ttng.tensor_memory, mutable>
   // CHECK-NEXT: [[ACC_BUF:%.*]] = ttg.memdesc_subview [[ACC_BUFS]][%c0_i32, %c0_i32, %c0_i32]
@@ -762,7 +772,7 @@ tt.func @matmul_tma_acc_with_conditional_def_and_use_no_multibuf_flag(
   // CHECK-SAME: [[MMA_INDEX:%arg[0-9]+]] = %c0_i32
   // CHECK-SAME: [[MMA_PHASE:%arg[0-9]+]] = %c0_i32
   // CHECK-SAME: [[ACC_PHASE:%arg[0-9]+]] = %c0_i32
-  scf.for %k = %c0_i32 to %k_tiles step %c1_i32 iter_args(%acc = %zero, %flag = %true) -> (tensor<128x128xf32, #acc_layout>, i1) : i32 {
+  scf.for %k = %c0_i32 to %tot_tiles step %c1_i32 iter_args(%acc = %zero, %flag = %true) -> (tensor<128x128xf32, #acc_layout>, i1) : i32 {
     // CHECK-NEXT: [[OFFS:%.*]]:3 = "get_offsets"([[K]])
     %off_m, %off_n, %off_k = "get_offsets"(%k) : (i32) -> (i32, i32, i32)
 
@@ -784,8 +794,10 @@ tt.func @matmul_tma_acc_with_conditional_def_and_use_no_multibuf_flag(
     // CHECK-NEXT: ttng.wait_barrier [[MMA_MBAR]], [[MMA_PHASE]] {ttg.partition = 3 : i32}
     // CHECK-NEXT: ttng.arrive_barrier {{.*}} {ttg.partition = 3 : i32}
 
+    %rem = arith.remsi %k, %k_tiles : i32
+    %last = arith.subi %k_tiles, %c1_i32 : i32
+    %do_epilogue = arith.cmpi eq, %rem, %last : i32
     // CHECK-NEXT: [[DO_EPILOGUE:%.*]] = "epilogue_cond"([[K]])
-    %do_epilogue = "epilogue_cond"(%k) : (i32) -> i1
     // CHECK-NEXT: [[NEXT_FLAG:%.*]] = arith.xori [[DO_EPILOGUE]], %true
 
     // CHECK-NEXT: ttng.arrive_barrier [[ACC_READY_BUF0]], 1, [[DO_EPILOGUE]] {ttg.partition = 3 : i32}

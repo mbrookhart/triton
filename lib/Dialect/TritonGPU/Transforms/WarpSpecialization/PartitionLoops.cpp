@@ -4,6 +4,7 @@
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Transforms/RegionUtils.h"
+#include "nvidia/include/Dialect/NVWS/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/Transforms/Partition.h"
 #include "triton/Dialect/TritonGPU/Transforms/PipeliningUtility.h"
@@ -26,6 +27,8 @@ using Partition = WarpSchedule::Partition;
 static void eraseOtherPartitions(scf::ForOp &loop, const WarpSchedule &schedule,
                                  const Partition *partition) {
   auto inPartition = [&](Operation *op) {
+    if (!partition)
+      return false;
     const Partition *opPartition =
         schedule.getPartition(loop.getBody()->findAncestorOpInBlock(*op));
     return llvm::is_contained({partition, schedule.getRootPartition()},
@@ -149,10 +152,11 @@ LogicalResult triton::gpu::partitionLoop(scf::ForOp loop) {
     return success();
 
   // Always assign the first partition to the default warp group.
-  const Partition &defaultPartition = *schedule.getPartition(0u);
+  // const Partition &defaultPartition = *schedule.getPartition(0u);
   SmallVector<std::unique_ptr<Block>> partitionBlocks;
   for (const Partition &partition :
-       llvm::drop_begin(schedule.getPartitions())) {
+       // llvm::drop_begin(schedule.getPartitions())) {
+       (schedule.getPartitions())) {
     FailureOr<std::unique_ptr<Block>> blockOr =
         slicePartition(loop, schedule, &partition);
     if (failed(blockOr))
@@ -160,62 +164,21 @@ LogicalResult triton::gpu::partitionLoop(scf::ForOp loop) {
     partitionBlocks.push_back(std::move(*blockOr));
   }
 
-  // Now delete everything except the default and root partitions from the base
-  // loop.
-  eraseOtherPartitions(loop, schedule, &defaultPartition);
+  // Now delete everything except the root partitions from the base loop.
+  eraseOtherPartitions(loop, schedule, nullptr);
 
-  // Create the warp specialize op and move in the partition blocks.
+  // Create the warp group op and move in the partition blocks.
   ImplicitLocOpBuilder b(loop.getLoc(), loop);
   int32_t functionNumWarps = lookupNumWarps(loop);
   SmallVector<int32_t> partitionNumWarps(partitionBlocks.size(),
                                          functionNumWarps);
-  auto wsOp = b.create<WarpSpecializeOp>(
-      loop.getResultTypes(), partitionNumWarps, partitionBlocks.size());
-  loop.replaceAllUsesWith(wsOp);
-  Block *defaultBlock = b.createBlock(&wsOp.getDefaultRegion());
-  loop->moveBefore(defaultBlock, defaultBlock->end());
-  b.setInsertionPointAfter(loop);
-  b.create<WarpYieldOp>(loop.getResults());
+  auto wsOp =
+      b.create<nvws::WarpGroupOp>(partitionNumWarps, partitionBlocks.size());
   for (auto [region, block] :
        llvm::zip(wsOp.getPartitionRegions(), partitionBlocks)) {
-    region->push_back(block.release());
-    b.setInsertionPointToEnd(&region->front());
-    b.create<WarpReturnOp>();
-  }
-
-  // The capture set is the same for every partition region, so now find the
-  // captures and thread them in to the regions.
-  SetVector<Value> captures;
-  getUsedValuesDefinedAbove(wsOp.getPartitionOpHolder(), captures);
-  for (unsigned i = 0; i < captures.size(); ++i) {
-    Value capture = captures[i];
-
-    // Rematerialize constants and also pure tensor ops to get around the
-    // restriction below on capturing tensors.
-    Operation *defOp = capture.getDefiningOp();
-    if (defOp && isPure(defOp) &&
-        (defOp->hasTrait<OpTrait::ConstantLike>() ||
-         isa<RankedTensorType>(capture.getType()))) {
-      captures.insert(defOp->operand_begin(), defOp->operand_end());
-      for (Region *region : wsOp.getPartitionRegions()) {
-        b.setInsertionPointToStart(&region->front());
-        Value copy = b.clone(*capture.getDefiningOp())->getResult(0);
-        replaceAllUsesInRegionWith(capture, copy, *region);
-      }
-      continue;
-    }
-
-    if (isa<RankedTensorType>(capture.getType())) {
-      return mlir::emitWarning(capture.getLoc(),
-                               "FIXME: capturing tensor values into warp "
-                               "partitions is not supported");
-    }
-    wsOp->insertOperands(wsOp.getNumOperands(), capture);
-    for (Region *region : wsOp.getPartitionRegions()) {
-      BlockArgument arg =
-          region->addArgument(capture.getType(), capture.getLoc());
-      replaceAllUsesInRegionWith(capture, arg, *region);
-    }
+    region.push_back(block.release());
+    b.setInsertionPointToEnd(&region.front());
+    b.create<nvws::WarpGroupReturnOp>();
   }
 
   return success();

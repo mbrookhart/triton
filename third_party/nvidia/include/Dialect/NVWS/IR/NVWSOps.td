@@ -81,7 +81,7 @@ def NVWS_ArefGetOp : NVWS_Op<"aref.get", []> {
   }];
   let arguments = (
     ins NVWS_ArefType:$operand,
-    Variadic<TT_IntLike>:$indexes
+    Variadic<I32>:$indexes
   );
 
   let regions = (region SizedRegion<1>:$region);
@@ -111,21 +111,27 @@ def NVWS_ArefPutOp : NVWS_Op<"aref.put", [SameVariadicOperandSize]> {
     completes, the buffers have been written to, and the aref is marked as “full”
     so that a consumer can read from them.
 
+    If the `reset` argument is present and false, the op assumes the buffer is
+    empty without waiting for a user. If the `reset` argument is present and true,
+    the op waits for an empty signal before executing.
+
     If the Aref contains in-register types (i.e., not ttg.MemDesc), the region should
     return the updated values. This represents a semantic copy at the aref level,
     but should be optimized away during lowering.
 
+
   }];
   let arguments = (
     ins NVWS_ArefType:$operand,
-    Variadic<TT_IntLike>:$indexes
+    Variadic<I32>:$indexes,
+    I1:$reset
   );
 
   let regions = (region SizedRegion<1>:$region);
 
   let results = (outs Variadic<AnyType>:$results);
 
-  let hasCustomAssemblyFormat = 1;
+let hasCustomAssemblyFormat = 1;
   let hasVerifier = 1;
 }
 

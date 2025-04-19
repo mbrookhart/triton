@@ -89,22 +89,15 @@ int getNumStagesOrDefault(scf::ForOp forOp, int defaultNumStages);
 
 // Given a result of MemDescSubview, or Alloca, create a MemDescSubview with a
 // single buffer slice (leading dimension equal to 1), at the given index.
+Type createViewType(mlir::Type allocType, bool mut);
+
 template <typename TBuilder>
 Value createSingleBufferView(TBuilder &builder, Value alloc, Value idx) {
   assert(isa<triton::gpu::MemDescType>(alloc.getType()) &&
          "Expected MemDescType");
   auto allocDescType = cast<triton::gpu::MemDescType>(alloc.getType());
-  SmallVector<int64_t> shape;
-  if (allocDescType.getShape().size() > 1) {
-    shape.insert(shape.end(), allocDescType.getShape().begin() + 1,
-                 allocDescType.getShape().end());
-  } else {
-    shape.push_back(1);
-  }
-  auto viewDescType = triton::gpu::MemDescType::get(
-      shape, allocDescType.getElementType(), allocDescType.getEncoding(),
-      allocDescType.getMemorySpace(), allocDescType.getMutableMemory(),
-      /*allocShape=*/allocDescType.getAllocShape());
+  auto viewDescType =
+      createViewType(alloc.getType(), allocDescType.getMutableMemory());
   SmallVector<Value> idxs = {idx};
   if (allocDescType.getShape().size() > 1) {
     Value zero =

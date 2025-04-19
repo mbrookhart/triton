@@ -1,8 +1,10 @@
+#include "mlir/IR/Attributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
 #include "nvidia/include/Dialect/NVWS/IR/Dialect.h"
 #include "triton/Dialect/Triton/IR/Types.h"
 #include "triton/Dialect/TritonGPU/IR/Attributes.h"
+#include "triton/Dialect/TritonGPU/IR/Dialect.h"
 #include "triton/Dialect/TritonGPU/IR/Types.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVectorExtras.h"
@@ -20,7 +22,8 @@ LogicalResult ArefCreateOp::verify() {
     SmallVector<int> dims;
     for (auto operand : getOperands()) {
       SmallVector<Operation *> users(operand.user_begin(), operand.user_end());
-      if (users.size() != 1)
+      if (users.size() > 2 ||
+          (users.size() == 2 && !isa<gpu::LocalDeallocOp>(users[1])))
         return emitError("Aref buffer is used elsewhere, Aref cannot guarantee "
                          "async safety");
       auto type = operand.getType();
@@ -42,14 +45,14 @@ LogicalResult ArefCreateOp::verify() {
 template <typename T>
 static std::optional<Twine> verifySlice(T &origType, T &newType, size_t rank) {
   if (!origType || !newType)
-    return "MLIR Types don't match";
-  if (origType.getElementType() != newType.getElementType() ||
-      origType.getRank() - rank != newType.getRank()) {
-    return "Ranks don't match";
-  }
+    return "Aref MLIR Types don't match";
+  if (origType.getElementType() != newType.getElementType())
+    return "Aref Sliced Element Types don't match Aref Value";
+  if (origType.getRank() - rank != newType.getRank())
+    return "Aref Sliced Ranks don't match Aref Value";
   for (size_t i = 0, e = newType.getShape().size(); i < e; i++) {
     if (origType.getShape()[i + rank] != newType.getShape()[i])
-      return "Dimensions don't match";
+      return "Aref Sliced Dimensions don't match";
   }
   return std::nullopt;
 }
@@ -58,6 +61,8 @@ std::optional<Twine> static arefRegionVerify(
     ArefType aref, ValueTypeRange<MutableArrayRef<BlockArgument>> blockArgTypes,
     size_t rank) {
   auto numBatchAxes = aref.getNumBatchAxes();
+  llvm::errs() << "numBatchAxes: " << numBatchAxes << '\n';
+  llvm::errs() << "rank: " << rank << '\n';
   if (numBatchAxes ? *numBatchAxes != rank : rank == 0)
     return "The Number of Batch axes on the aref type does not match the "
            "number of indexes";
@@ -97,10 +102,16 @@ LogicalResult ArefPutOp::verify() {
 ParseResult ArefRegionParse(OpAsmParser &p, OperationState &result) {
   SmallVector<OpAsmParser::UnresolvedOperand> operands;
   SmallVector<OpAsmParser::Argument> blockArgs;
+  OpAsmParser::UnresolvedOperand reset;
   SMLoc operandLoc = p.getCurrentLocation();
   if (p.parseOperandList(operands, AsmParser::Delimiter::None) ||
-      p.parseOperandList(operands, AsmParser::Delimiter::OptionalSquare) ||
-      p.parseKeyword("as") ||
+      p.parseOperandList(operands, AsmParser::Delimiter::OptionalSquare))
+    return failure();
+
+  if (p.parseOptionalOperand(reset).has_value())
+    operands.push_back(reset);
+
+  if (p.parseKeyword("as") ||
       p.parseArgumentList(blockArgs, AsmParser::Delimiter::Paren, true) ||
       p.parseRegion(*result.addRegion(), blockArgs) ||
       p.parseOptionalAttrDictWithKeyword(result.attributes))
@@ -130,6 +141,10 @@ void ArefPutOp::print(OpAsmPrinter &p) {
     p.printOperands(getIndexes());
     p << ']';
   }
+  p << ' ';
+  auto reset = getReset();
+  if (reset)
+    p.printOperand(reset);
 
   p << " as ";
   p << '(';
