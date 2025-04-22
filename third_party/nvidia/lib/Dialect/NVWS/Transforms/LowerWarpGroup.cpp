@@ -110,7 +110,43 @@ class LowerWarpGroup : public OpRewritePattern<WarpGroupOp> {
         inputs.push_back(capture);
       }
     }
+    /* Lower Loop Captures, do I need to add any of these checks?
+    // The capture set is the same for every partition region, so now find the
+    // captures and thread them in to the regions.
+    SetVector<Value> captures;
+    getUsedValuesDefinedAbove(wsOp.getPartitionOpHolder(), captures);
+    for (unsigned i = 0; i < captures.size(); ++i) {
+      Value capture = captures[i];
 
+      // Rematerialize constants and also pure tensor ops to get around the
+      // restriction below on capturing tensors.
+      Operation *defOp = capture.getDefiningOp();
+      if (defOp && isPure(defOp) &&
+          (defOp->hasTrait<OpTrait::ConstantLike>() ||
+           isa<RankedTensorType>(capture.getType()))) {
+        captures.insert(defOp->operand_begin(), defOp->operand_end());
+        for (Region *region : wsOp.getPartitionRegions()) {
+          b.setInsertionPointToStart(&region->front());
+          Value copy = b.clone(*capture.getDefiningOp())->getResult(0);
+          replaceAllUsesInRegionWith(capture, copy, *region);
+        }
+        continue;
+      }
+
+      if (isa<RankedTensorType>(capture.getType())) {
+        return mlir::emitWarning(capture.getLoc(),
+                                 "FIXME: capturing tensor values into warp "
+                                 "partitions is not supported");
+      }
+      wsOp->insertOperands(wsOp.getNumOperands(), capture);
+      for (Region *region : wsOp.getPartitionRegions()) {
+        BlockArgument arg =
+            region->addArgument(capture.getType(), capture.getLoc());
+        replaceAllUsesInRegionWith(capture, arg, *region);
+      }
+    }
+
+    */
     auto wsOp = rewriter.create<WarpSpecializeOp>(loc, TypeRange(), inputs);
 
     wsOp.setPartitionNumWarps(numWarps);

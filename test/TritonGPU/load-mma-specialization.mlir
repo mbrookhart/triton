@@ -396,7 +396,8 @@ tt.func @matmul_tma_acc_with_conditional_user(
   %c1_i32 = arith.constant 1 : i32
   %true = arith.constant true
   %zero = arith.constant dense<0.0> : tensor<128x128xf32, #acc_layout>
-  %k_tiles = arith.constant 32 : i32
+  %tot_tiles = arith.constant 32 : i32
+  %k_tiles = arith.constant 8 : i32
 
   // CHECK: [[ACC_BUFS:%.*]], [[ACC_TOK:%.*]] = ttng.tmem_alloc
   // CHECK-COUNT-2: ttg.local_alloc : () -> !ttg.memdesc<2xi64
@@ -409,7 +410,7 @@ tt.func @matmul_tma_acc_with_conditional_user(
   // CHECK-SAME: [[LOAD_PHASE:%arg[0-9]+]] = %c0_i32
   // CHECK-SAME: [[ACC_INDEX:%arg[0-9]+]] = %c0_i32
   // CHECK-SAME: [[ACC_PHASE:%arg[0-9]+]] = %c0_i32
-  scf.for %k = %c0_i32 to %k_tiles step %c1_i32 iter_args(%acc = %zero) -> tensor<128x128xf32, #acc_layout> : i32 {
+  scf.for %k = %c0_i32 to %tot_tiles step %c1_i32 iter_args(%acc = %zero) -> tensor<128x128xf32, #acc_layout> : i32 {
     // CHECK-NEXT: [[CUR_ACC_EMPTY_BAR:%.*]] = ttg.memdesc_subview [[ACC_EMPTY_BUFS]][[[ACC_INDEX]]]
     // CHECK-NEXT: [[CUR_ACC_READY_BAR:%.*]] = ttg.memdesc_subview [[ACC_READY_BUFS]][[[ACC_INDEX]]]
 
@@ -495,7 +496,8 @@ tt.func @matmul_tma_acc_with_conditional_def(
   %true = arith.constant true
   // CHECK: [[ZERO:%.*]] = arith.constant dense<0.0
   %zero = arith.constant dense<0.0> : tensor<128x128xf32, #acc_layout>
-  %k_tiles = arith.constant 32 : i32
+  %tot_tiles = arith.constant 32 : i32
+  %k_tiles = arith.constant 8 : i32
 
   // CHECK: [[ACC_BUFS:%.*]], [[ACC_TOK:%.*]] = ttng.tmem_alloc
   // CHECK-COUNT-2: ttg.local_alloc : () -> !ttg.memdesc<2xi64
@@ -508,7 +510,7 @@ tt.func @matmul_tma_acc_with_conditional_def(
   // CHECK-SAME: [[LOAD_PHASE:%arg[0-9]+]] = %c0_i32
   // CHECK-SAME: [[ACC_INDEX:%arg[0-9]+]] = %c0_i32
   // CHECK-SAME: [[ACC_PHASE:%arg[0-9]+]] = %c0_i32
-  scf.for %k = %c0_i32 to %k_tiles step %c1_i32 iter_args(%acc = %zero) -> tensor<128x128xf32, #acc_layout> : i32 {
+  scf.for %k = %c0_i32 to %tot_tiles step %c1_i32 iter_args(%acc = %zero) -> tensor<128x128xf32, #acc_layout> : i32 {
     // CHECK-NEXT: [[CUR_ACC_EMPTY_BAR:%.*]] = ttg.memdesc_subview [[ACC_EMPTY_BUFS]][[[ACC_INDEX]]]
     // CHECK-NEXT: [[CUR_ACC_READY_BAR:%.*]] = ttg.memdesc_subview [[ACC_READY_BUFS]][[[ACC_INDEX]]]
 
@@ -589,7 +591,8 @@ tt.func @matmul_tma_acc_with_conditional_def_and_use(
   %true = arith.constant true
   // CHECK: [[ZERO:%.*]] = arith.constant dense<0.0
   %zero = arith.constant dense<0.0> : tensor<128x128xf32, #acc_layout>
-  %k_tiles = arith.constant 32 : i32
+  %tot_tiles = arith.constant 32 : i32
+  %k_tiles = arith.constant 8 : i32
 
   // CHECK: [[ACC_BUFS:%.*]], [[ACC_TOK:%.*]] = ttng.tmem_alloc
   // CHECK-COUNT-2: ttg.local_alloc : () -> !ttg.memdesc<2xi64
@@ -602,7 +605,7 @@ tt.func @matmul_tma_acc_with_conditional_def_and_use(
   // CHECK-SAME: [[LOAD_PHASE:%arg[0-9]+]] = %c0_i32
   // CHECK-SAME: [[ACC_INDEX:%arg[0-9]+]] = %c0_i32
   // CHECK-SAME: [[ACC_PHASE:%arg[0-9]+]] = %c0_i32
-  scf.for %k = %c0_i32 to %k_tiles step %c1_i32 iter_args(%acc = %zero) -> tensor<128x128xf32, #acc_layout> : i32 {
+  scf.for %k = %c0_i32 to %tot_tiles step %c1_i32 iter_args(%acc = %zero) -> tensor<128x128xf32, #acc_layout> : i32 {
     // CHECK-NEXT: [[CUR_ACC_EMPTY_BAR:%.*]] = ttg.memdesc_subview [[ACC_EMPTY_BUFS]][[[ACC_INDEX]]]
     // CHECK-NEXT: [[CUR_ACC_READY_BAR:%.*]] = ttg.memdesc_subview [[ACC_READY_BUFS]][[[ACC_INDEX]]]
 
@@ -690,7 +693,8 @@ tt.func @matmul_tma_acc_with_conditional_def_and_use_no_multibuf_flag(
   %false = arith.constant false
   // CHECK: [[ZERO:%.*]] = arith.constant dense<0.0
   %zero = arith.constant dense<0.0> : tensor<128x128xf32, #acc_layout>
-  %k_tiles = arith.constant 32 : i32
+  %tot_tiles = arith.constant 32 : i32
+  %k_tiles = arith.constant 8 : i32
 
   // CHECK: [[ACC_BUFS:%.*]], [[ACC_TOK:%.*]] = ttng.tmem_alloc
   // CHECK-NEXT: [[ACC_BUF:%.*]] = ttg.memdesc_subview [[ACC_BUFS]][%c0_i32, %c0_i32, %c0_i32]
@@ -711,7 +715,7 @@ tt.func @matmul_tma_acc_with_conditional_def_and_use_no_multibuf_flag(
   // CHECK-SAME: [[LOAD_INDEX:%arg[0-9]+]] = %c0_i32
   // CHECK-SAME: [[LOAD_PHASE:%arg[0-9]+]] = %c0_i32
   // CHECK-SAME: [[ACC_PHASE:%arg[0-9]+]] = %c0_i32
-  scf.for %k = %c0_i32 to %k_tiles step %c1_i32 iter_args(%acc = %zero, %flag = %true) -> (tensor<128x128xf32, #acc_layout>, i1) : i32 {
+  scf.for %k = %c0_i32 to %tot_tiles step %c1_i32 iter_args(%acc = %zero, %flag = %true) -> (tensor<128x128xf32, #acc_layout>, i1) : i32 {
     // CHECK-NEXT: [[OFFS:%.*]]:3 = "get_offsets"([[K]])
     %off_m, %off_n, %off_k = "get_offsets"(%k) : (i32) -> (i32, i32, i32)
 

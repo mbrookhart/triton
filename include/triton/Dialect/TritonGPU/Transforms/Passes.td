@@ -113,6 +113,7 @@ def TritonGPUAutomaticWarpSpecialization : Pass<"tritongpu-automatic-warp-specia
 
   let dependentDialects = [
     "mlir::triton::gpu::TritonGPUDialect",
+    "mlir::triton::nvws::NVWSDialect",
     "mlir::scf::SCFDialect",
     "mlir::arith::ArithDialect",
     "mlir::triton::nvidia_gpu::TritonNvidiaGPUDialect"
@@ -174,7 +175,10 @@ def TritonGPULoadMMASpecialization : Pass<"tritongpu-load-mma-specialization", "
     and async MMAs into separate partitions.
   }];
 
-  let dependentDialects = ["mlir::triton::gpu::TritonGPUDialect"];
+  let dependentDialects = [
+    "mlir::triton::gpu::TritonGPUDialect",
+    "mlir::triton::nvws::NVWSDialect"
+  ];
 
   let options = [
     Option<"numStages", "num-stages", "int32_t", /*default*/"3",

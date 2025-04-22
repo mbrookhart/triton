@@ -59,7 +59,9 @@ def NVWS_ArefCreateOp : NVWS_Op<"aref.create", [
   let hasVerifier = 1;
 }
 
-def NVWS_ArefGetOp : NVWS_Op<"aref.get", []> {
+def NVWS_ArefGetOp : NVWS_Op<"aref.get", [
+    SingleBlockImplicitTerminator<"nvws::ArefReturnOp">
+]> {
   let summary = "Get value(s) from an asynchronous reference";
   let description = [{
     Get values from the asynchronous reference for reading.
@@ -81,7 +83,7 @@ def NVWS_ArefGetOp : NVWS_Op<"aref.get", []> {
   }];
   let arguments = (
     ins NVWS_ArefType:$operand,
-    Variadic<TT_IntLike>:$indexes
+    Variadic<I32>:$indexes
   );
 
   let regions = (region SizedRegion<1>:$region);
@@ -92,7 +94,9 @@ def NVWS_ArefGetOp : NVWS_Op<"aref.get", []> {
   let hasVerifier = 1;
 }
 
-def NVWS_ArefPutOp : NVWS_Op<"aref.put", [SameVariadicOperandSize]> {
+def NVWS_ArefPutOp : NVWS_Op<"aref.put", [SameVariadicOperandSize,
+    SingleBlockImplicitTerminator<"nvws::ArefReturnOp">
+]> {
   let summary = "Put value(s) into an asynchronous reference";
   let description = [{
     Get values from the asynchronous reference for writing.
@@ -111,21 +115,27 @@ def NVWS_ArefPutOp : NVWS_Op<"aref.put", [SameVariadicOperandSize]> {
     completes, the buffers have been written to, and the aref is marked as “full”
     so that a consumer can read from them.
 
+    If the `reuse` argument is true, the op assumes the buffer is
+    empty without waiting for a user. If the `reuse` argument is false,
+    the op waits for an empty signal before executing.
+
     If the Aref contains in-register types (i.e., not ttg.MemDesc), the region should
     return the updated values. This represents a semantic copy at the aref level,
     but should be optimized away during lowering.
 
+
   }];
   let arguments = (
     ins NVWS_ArefType:$operand,
-    Variadic<TT_IntLike>:$indexes
+    Variadic<I32>:$indexes,
+    I1:$reuse
   );
 
   let regions = (region SizedRegion<1>:$region);
 
   let results = (outs Variadic<AnyType>:$results);
 
-  let hasCustomAssemblyFormat = 1;
+let hasCustomAssemblyFormat = 1;
   let hasVerifier = 1;
 }
 

@@ -11,6 +11,7 @@ module attributes {nvws.mma = {num_warps = 4 : i32, start_warp = 0 : i32}, nvws.
   // CHECK-LABEL: matmul_kernel
   tt.func public @matmul_kernel(%arg0: !tt.ptr<f32> {tt.divisibility = 16 : i32}, %arg1: !tt.ptr<f32> {tt.divisibility = 16 : i32}, %arg2: !tt.ptr<f8E4M3FN> {tt.divisibility = 16 : i32}, %arg3: i32 {tt.divisibility = 16 : i32}, %arg4: i32 {tt.divisibility = 16 : i32}, %arg5: i32 {tt.divisibility = 16 : i32}, %arg6: i32 {tt.divisibility = 16 : i32}) attributes {noinline = false} {
     %true = arith.constant true
+    %false = arith.constant false
     %c128_i32 = arith.constant {} 128 : i32
     %c0_i32 = arith.constant 0 : i32
     %c64_i32 = arith.constant 64 : i32
@@ -47,7 +48,7 @@ module attributes {nvws.mma = {num_warps = 4 : i32, start_warp = 0 : i32}, nvws.
       %16:2 = scf.for %arg7 = %c0_i32 to %8 step %c1_i32 iter_args(%arg8 = %c0_i32, %arg9 = %c0_i32) -> (i32, i32)  : i32 {
         %17 = tt.reinterpret_tensor_descriptor %arg0 {} : !tt.ptr<f32> to !tt.tensordesc<tensor<128x64xf8E4M3FN>>
         %18 = tt.reinterpret_tensor_descriptor %arg1 {} : !tt.ptr<f32> to !tt.tensordesc<tensor<128x64xf8E4M3FN>>
-        nvws.aref.put %12[%arg9] as (%arg10: !ttg.memdesc<128x64xf8E4M3FN, #shared, #smem, mutable>,
+        nvws.aref.put %12[%arg9] %false as (%arg10: !ttg.memdesc<128x64xf8E4M3FN, #shared, #smem, mutable>,
                                      %arg11: !ttg.memdesc<128x64xf8E4M3FN, #shared, #smem, mutable>) {
           // CHECK: ttng.wait_barrier
           // CHECK-NEXT: ttg.memdesc_subview
@@ -63,7 +64,7 @@ module attributes {nvws.mma = {num_warps = 4 : i32, start_warp = 0 : i32}, nvws.
           %22 = tt.descriptor_load %18[%6, %arg8] {} : !tt.tensordesc<tensor<128x64xf8E4M3FN>> -> tensor<128x64xf8E4M3FN, #blocked1>
           ttg.local_store %22, %arg11 : tensor<128x64xf8E4M3FN, #blocked1> -> !ttg.memdesc<128x64xf8E4M3FN, #shared, #smem, mutable>
           nvws.aref.return
-        } : (!nvws.aref<[!ttg.memdesc<3x128x64xf8E4M3FN, #shared, #smem, mutable>, !ttg.memdesc<3x128x64xf8E4M3FN, #shared, #smem, mutable>], 1>, i32) -> ()
+        } : (!nvws.aref<[!ttg.memdesc<3x128x64xf8E4M3FN, #shared, #smem, mutable>, !ttg.memdesc<3x128x64xf8E4M3FN, #shared, #smem, mutable>], 1>, i32, i1) -> ()
         %19 = arith.addi %arg8, %c64_i32 {} : i32
         %20 = arith.addi %arg9, %c1_i32 {} : i32
         scf.yield {} %19, %20 : i32, i32
@@ -73,7 +74,7 @@ module attributes {nvws.mma = {num_warps = 4 : i32, start_warp = 0 : i32}, nvws.
     // CHECK: partition1 num_warps(4) {
     partition1 num_warps(4) {
       nvvm.setmaxregister  increase 232
-      nvws.aref.put %tmem_aref as (%arg11 : !ttg.memdesc<128x128xf32, #tmem, #ttng.tensor_memory, mutable>) {
+      nvws.aref.put %tmem_aref %false as (%arg11 : !ttg.memdesc<128x128xf32, #tmem, #ttng.tensor_memory, mutable>) {
         // CHECK: ttng.wait_barrier
         %16 = scf.for %arg7 = %c0_i32 to %8 step %c1_i32 iter_args(%arg8 = %c0_i32) -> (i32)  : i32 {
           nvws.aref.get %12[%arg8] as (%arg9 : !ttg.memdesc<128x64xf8E4M3FN, #shared, #smem, mutable>,
@@ -96,7 +97,7 @@ module attributes {nvws.mma = {num_warps = 4 : i32, start_warp = 0 : i32}, nvws.
           scf.yield %37 : i32
         }
         nvws.aref.return
-      } : (!nvws.aref<[!ttg.memdesc<128x128xf32, #tmem, #ttng.tensor_memory, mutable>]>) -> ()
+      } : (!nvws.aref<[!ttg.memdesc<128x128xf32, #tmem, #ttng.tensor_memory, mutable>]>, i1) -> ()
       %17 = nvws.aref.get %tmem_aref as (%arg11 : !ttg.memdesc<128x128xf32, #tmem, #ttng.tensor_memory, mutable>) {
         %acc = ttng.tmem_load %arg11 {} : !ttg.memdesc<128x128xf32, #tmem, #ttng.tensor_memory, mutable> -> tensor<128x128xf32, #blocked>
         nvws.aref.return %acc : tensor<128x128xf32, #blocked>
@@ -187,7 +188,7 @@ module attributes {nvws.mma = {num_warps = 4 : i32, start_warp = 0 : i32}, nvws.
         %31:2 = scf.for %arg8 = %c0_i32 to %6 step %c1_i32 iter_args(%arg9 = %c0_i32, %arg10 = %arg7) -> (i32, i32)  : i32 {
           %32 = tt.reinterpret_tensor_descriptor %arg0 {} : !tt.ptr<f32> to !tt.tensordesc<tensor<128x128xf8E4M3FN>>
           %33 = tt.reinterpret_tensor_descriptor %arg1 {} : !tt.ptr<f32> to !tt.tensordesc<tensor<128x128xf8E4M3FN>>
-          nvws.aref.put %14[%arg10] as (%arg11: !ttg.memdesc<128x128xf8E4M3FN, #shared, #smem, mutable>, %arg12: !ttg.memdesc<128x128xf8E4M3FN, #shared, #smem, mutable>) {
+          nvws.aref.put %14[%arg10] %false as (%arg11: !ttg.memdesc<128x128xf8E4M3FN, #shared, #smem, mutable>, %arg12: !ttg.memdesc<128x128xf8E4M3FN, #shared, #smem, mutable>) {
             // CHECK: ttng.wait_barrier
             // CHECK-NEXT: ttg.memdesc_subview
             // CHECK-NEXT: ttg.memdesc_subview
@@ -202,7 +203,7 @@ module attributes {nvws.mma = {num_warps = 4 : i32, start_warp = 0 : i32}, nvws.
             %37 = tt.descriptor_load %33[%30, %arg9] {} : !tt.tensordesc<tensor<128x128xf8E4M3FN>> -> tensor<128x128xf8E4M3FN, #blocked1>
             ttg.local_store %37, %arg12 : tensor<128x128xf8E4M3FN, #blocked1> -> !ttg.memdesc<128x128xf8E4M3FN, #shared, #smem, mutable>
             nvws.aref.return
-          }: (!nvws.aref<[!ttg.memdesc<3x128x128xf8E4M3FN, #shared, #smem, mutable>, !ttg.memdesc<3x128x128xf8E4M3FN, #shared, #smem, mutable>], 1>, i32) -> ()
+          }: (!nvws.aref<[!ttg.memdesc<3x128x128xf8E4M3FN, #shared, #smem, mutable>, !ttg.memdesc<3x128x128xf8E4M3FN, #shared, #smem, mutable>], 1>, i32, i1) -> ()
           %34 = arith.addi %arg9, %c128_i32 {} : i32
           %35 = arith.addi %arg10, %c1_i32 {} : i32
           scf.yield {} %34, %35 : i32, i32
@@ -217,7 +218,7 @@ module attributes {nvws.mma = {num_warps = 4 : i32, start_warp = 0 : i32}, nvws.
       //CHECK-NEXT: scf.for
       %20 = scf.for %arg6 = %0 to %7 step %9 iter_args(%arg7 = %c0_i32) -> (i32)  : i32 {
         %21 = arith.remsi %arg6, %c2_i32 : i32
-        nvws.aref.put %16[%21] as (%arg11 : !ttg.memdesc<128x128xf32, #tmem, #ttng.tensor_memory, mutable>) {
+        nvws.aref.put %16[%21] %false as (%arg11 : !ttg.memdesc<128x128xf32, #tmem, #ttng.tensor_memory, mutable>) {
           // CHECK: ttng.wait_barrier
           // CHECK-NEXT: ttg.memdesc_subview
           // CHECK-NEXT: scf.for
@@ -245,7 +246,7 @@ module attributes {nvws.mma = {num_warps = 4 : i32, start_warp = 0 : i32}, nvws.
           // CHECK-NEXT: ttg.memdesc_subview
           // CHECK-NEXT: ttng.arrive_barrier
           nvws.aref.return
-        } : (!nvws.aref<[!ttg.memdesc<2x128x128xf32, #tmem, #ttng.tensor_memory, mutable>], 1>, i32) -> ()
+        } : (!nvws.aref<[!ttg.memdesc<2x128x128xf32, #tmem, #ttng.tensor_memory, mutable>], 1>, i32, i1) -> ()
         %31 = arith.addi %arg7, %6 : i32
         scf.yield {} %31 : i32
       }
@@ -292,6 +293,7 @@ module attributes {nvws.mma = {num_warps = 4 : i32, start_warp = 0 : i32}, nvws.
 module attributes {nvws.mma = {num_warps = 4 : i32, start_warp = 0 : i32}, nvws.tma_load = {num_warps = 4 : i32, start_warp = 4 : i32}, "ttg.num-ctas" = 1 : i32, "ttg.num-warps" = 4 : i32, ttg.target = "cuda:90", "ttg.threads-per-warp" = 32 : i32, "ttg.warp-specialized" = true} {
   //CHECK-LABEL: matmul_kernel_hopper
   tt.func public @matmul_kernel_hopper(%arg0: !tt.ptr<f32> {tt.divisibility = 16 : i32}, %arg1: !tt.ptr<f32> {tt.divisibility = 16 : i32}, %arg2: !tt.ptr<f8E4M3FN> {tt.divisibility = 16 : i32}, %arg3: i32 {tt.divisibility = 16 : i32}, %arg4: i32 {tt.divisibility = 16 : i32}, %arg5: i32 {tt.divisibility = 16 : i32}, %arg6: i32 {tt.divisibility = 16 : i32}) attributes {noinline = false} {
+    %false = arith.constant false
     %c128_i32 = arith.constant 128 : i32
     %c0_i32 = arith.constant 0 : i32
     %c64_i32 = arith.constant 64 : i32
@@ -326,7 +328,7 @@ module attributes {nvws.mma = {num_warps = 4 : i32, start_warp = 0 : i32}, nvws.
       %18:2 = scf.for %arg7 = %c0_i32 to %8 step %c1_i32 iter_args(%arg8 = %c0_i32, %arg9 = %c0_i32) -> (i32, i32)  : i32 {
         %19 = tt.reinterpret_tensor_descriptor %arg0 {} : !tt.ptr<f32> to !tt.tensordesc<tensor<128x64xf8E4M3FN>>
         %20 = tt.reinterpret_tensor_descriptor %arg1 {} : !tt.ptr<f32> to !tt.tensordesc<tensor<128x64xf8E4M3FN>>
-        nvws.aref.put %13[%arg9] as (%arg10: !ttg.memdesc<128x64xf8E4M3FN, #ttg.nvmma_shared<{swizzlingByteWidth = 64, transposed = false, elementBitWidth = 8}>, #ttg.shared_memory, mutable>, %arg11: !ttg.memdesc<128x64xf8E4M3FN, #ttg.nvmma_shared<{swizzlingByteWidth = 64, transposed = false, elementBitWidth = 8}>, #ttg.shared_memory, mutable>) {
+        nvws.aref.put %13[%arg9] %false as (%arg10: !ttg.memdesc<128x64xf8E4M3FN, #ttg.nvmma_shared<{swizzlingByteWidth = 64, transposed = false, elementBitWidth = 8}>, #ttg.shared_memory, mutable>, %arg11: !ttg.memdesc<128x64xf8E4M3FN, #ttg.nvmma_shared<{swizzlingByteWidth = 64, transposed = false, elementBitWidth = 8}>, #ttg.shared_memory, mutable>) {
           // CHECK: ttng.wait_barrier
           // CHECK-NEXT: ttg.memdesc_subview
           // CHECK-NEXT: ttg.memdesc_subview
@@ -341,7 +343,7 @@ module attributes {nvws.mma = {num_warps = 4 : i32, start_warp = 0 : i32}, nvws.
           %24 = tt.descriptor_load %20[%6, %arg8] {} : !tt.tensordesc<tensor<128x64xf8E4M3FN>> -> tensor<128x64xf8E4M3FN, #ttg.blocked<{sizePerThread = [1, 1], threadsPerWarp = [1, 32], warpsPerCTA = [2, 2], order = [1, 0]}>>
           ttg.local_store %24, %arg11 : tensor<128x64xf8E4M3FN, #ttg.blocked<{sizePerThread = [1, 1], threadsPerWarp = [1, 32], warpsPerCTA = [2, 2], order = [1, 0]}>> -> !ttg.memdesc<128x64xf8E4M3FN, #ttg.nvmma_shared<{swizzlingByteWidth = 64, transposed = false, elementBitWidth = 8}>, #ttg.shared_memory, mutable>
           nvws.aref.return
-        } : (!nvws.aref<[!ttg.memdesc<3x128x64xf8E4M3FN, #ttg.nvmma_shared<{swizzlingByteWidth = 64, transposed = false, elementBitWidth = 8}>, #ttg.shared_memory, mutable>, !ttg.memdesc<3x128x64xf8E4M3FN, #ttg.nvmma_shared<{swizzlingByteWidth = 64, transposed = false, elementBitWidth = 8}>, #ttg.shared_memory, mutable>], 1>, i32) -> ()
+        } : (!nvws.aref<[!ttg.memdesc<3x128x64xf8E4M3FN, #ttg.nvmma_shared<{swizzlingByteWidth = 64, transposed = false, elementBitWidth = 8}>, #ttg.shared_memory, mutable>, !ttg.memdesc<3x128x64xf8E4M3FN, #ttg.nvmma_shared<{swizzlingByteWidth = 64, transposed = false, elementBitWidth = 8}>, #ttg.shared_memory, mutable>], 1>, i32, i1) -> ()
         %21 = arith.addi %arg8, %c64_i32 {} : i32
         %22 = arith.addi %arg9, %c1_i32 {} : i32
         scf.yield {} %21, %22 : i32, i32

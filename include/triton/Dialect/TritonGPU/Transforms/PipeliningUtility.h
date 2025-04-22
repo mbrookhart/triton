@@ -123,6 +123,8 @@ gpu::SharedEncodingTrait getSharedEncoding(Operation *loadOp);
 // specified.
 int getNumStagesOrDefault(scf::ForOp forOp, int defaultNumStages);
 
+Type createViewType(mlir::Type allocType);
+
 // Given a result of MemDescSubview, or Alloca, create a MemDescSubview with a
 // single buffer slice (leading dimension equal to 1), at the given index.
 template <typename TBuilder>
@@ -131,17 +133,7 @@ createSingleBufferView(TBuilder &builder, Value alloc, Value idx) {
   assert(isa<triton::gpu::MemDescType>(alloc.getType()) &&
          "Expected MemDescType");
   auto allocDescType = cast<triton::gpu::MemDescType>(alloc.getType());
-  SmallVector<int64_t> shape;
-  if (allocDescType.getShape().size() > 1) {
-    shape.insert(shape.end(), allocDescType.getShape().begin() + 1,
-                 allocDescType.getShape().end());
-  } else {
-    shape.push_back(1);
-  }
-  auto viewDescType = triton::gpu::MemDescType::get(
-      shape, allocDescType.getElementType(), allocDescType.getEncoding(),
-      allocDescType.getMemorySpace(), allocDescType.getMutableMemory(),
-      /*allocShape=*/allocDescType.getAllocShape());
+  auto viewDescType = createViewType(alloc.getType());
   SmallVector<Value> idxs = {idx};
   if (allocDescType.getShape().size() > 1) {
     Value zero =
