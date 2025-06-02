@@ -15,6 +15,7 @@ Extra Credits:
 
 import pytest
 import torch
+import os
 
 import triton
 import triton.language as tl
@@ -100,23 +101,35 @@ def _host_descriptor_pre_hook(nargs):
 if is_hip():
     NUM_STAGES_OPTIONS = [1]
 elif supports_host_descriptor():
-    NUM_STAGES_OPTIONS = [3, 4, 5]
+    NUM_STAGES_OPTIONS = [2, 3, 4]
 else:
-    NUM_STAGES_OPTIONS = [3, 4, 7]
+    NUM_STAGES_OPTIONS = [2, 3, 4]
 
 configs = [
     triton.Config({'BLOCK_M': BM, 'BLOCK_N': BN}, num_stages=s, num_warps=w, pre_hook=_host_descriptor_pre_hook) \
-    for BM in [64, 128, 256]\
+    for BM in [64, 128]\
     for BN in [64, 128]\
     for s in NUM_STAGES_OPTIONS \
     for w in [4, 8]\
 ]
+if "PYTEST_VERSION" in os.environ:
+    # Use a single config in testing for reproducibility
+    configs = [
+        triton.Config(dict(BLOCK_M=64, BLOCK_N=64), num_stages=4, num_warps=4, pre_hook=_host_descriptor_pre_hook),
+    ]
 
 
 def keep(conf):
     BLOCK_M = conf.kwargs["BLOCK_M"]
     BLOCK_N = conf.kwargs["BLOCK_N"]
     return not (torch.cuda.get_device_capability()[0] == 9 and BLOCK_M * BLOCK_N < 128 * 128 and conf.num_warps == 8)
+
+
+def prune_invalid_configs(configs, named_args, **kwargs):
+    N_CTX = kwargs["N_CTX"]
+
+    # Filter out configs where BLOCK_M > N_CTX
+    return [conf for conf in configs if conf.kwargs.get("BLOCK_M", 0) <= N_CTX]
 
 
 @triton.jit
@@ -127,7 +140,8 @@ def _maybe_make_tensor_desc(desc_or_ptr, shape, strides, block_shape):
         return tl.make_tensor_descriptor(desc_or_ptr, shape, strides, block_shape)
 
 
-@triton.autotune(configs=list(filter(keep, configs)), key=["N_CTX", "HEAD_DIM", "FP8_OUTPUT", "warp_specialize"])
+@triton.autotune(configs=list(filter(keep, configs)), key=["N_CTX", "HEAD_DIM", "FP8_OUTPUT", "warp_specialize"],
+                 prune_configs_by={'early_config_prune': prune_invalid_configs})
 @triton.jit
 def _attn_fwd(sm_scale, M,  #
               Z, H, desc_q, desc_k, desc_v, desc_o, N_CTX,  #
@@ -488,6 +502,8 @@ class _attention(torch.autograd.Function):
             return (triton.cdiv(q.shape[2], META["BLOCK_M"]), q.shape[0] * q.shape[1], 1)
 
         ctx.grid = grid
+        if is_cuda() and warp_specialize:
+            extra_kern_args["maxnreg"] = 80
         _attn_fwd[grid](
             sm_scale, M,  #
             q.shape[0], q.shape[1],  #
@@ -561,7 +577,7 @@ attention = _attention.apply
     (4, 48, 4096, 64),
 ])
 @pytest.mark.parametrize("causal", [True])
-@pytest.mark.parametrize("warp_specialize", [False])
+@pytest.mark.parametrize("warp_specialize", [False, True])
 def test_op(Z, H, N_CTX, HEAD_DIM, causal, warp_specialize, dtype=torch.float16):
     torch.manual_seed(20)
     q = (torch.empty((Z, H, N_CTX, HEAD_DIM), dtype=dtype, device=DEVICE).normal_(mean=0.0, std=0.5).requires_grad_())

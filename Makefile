@@ -28,7 +28,7 @@ test-lit:
 test-cpp:
 	ninja -C $(BUILD_DIR) check-triton-unit-tests
 
-.PHONY: test-python
+.PHONY: test-unit
 test-unit: all
 	cd python/test/unit && $(PYTEST) -s -n 8 --ignore=language/test_line_info.py \
 		--ignore=language/test_subprocess.py --ignore=test_debug.py
@@ -37,9 +37,14 @@ test-unit: all
 	$(PYTEST) -s -n 8 python/triton_kernels/tests/
 	TRITON_DISABLE_LINE_INFO=0 $(PYTEST) -s python/test/unit/language/test_line_info.py
 	# Run attention separately to avoid out of gpu memory
-	$(PYTEST) -s python/tutorials/06-fused-attention.py
+	$(PYTEST) -vs python/tutorials/06-fused-attention.py
 	TRITON_ALWAYS_COMPILE=1 TRITON_DISABLE_LINE_INFO=0 LLVM_PASS_PLUGIN_PATH=python/triton/instrumentation/libGPUInstrumentationTestLib.so \
 		$(PYTEST) --capture=tee-sys -rfs -vvv python/test/unit/instrumentation/test_gpuhello.py
+	$(PYTEST) -s -n 8 python/test/gluon
+
+.PHONY: test-gluon
+test-gluon: all
+	$(PYTEST) -s -n 8 python/test/gluon
 
 .PHONY: test-regression
 test-regression: all
