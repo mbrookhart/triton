@@ -76,7 +76,28 @@ template <> struct GraphTraits<PartitionGraph> {
   }
 };
 } // namespace llvm
-
+// Traversal
+LogicalResult
+triton::gpu::traverse(mlir::Operation *currOp,
+                      std::function<LogicalResult(Operation *)> callback) {
+  for (Region &currRegion : currOp->getRegions()) {
+    for (Block &currBlock : currRegion.getBlocks()) {
+      for (auto &op :
+           llvm::make_early_inc_range(currBlock.without_terminator())) {
+        if (isa<scf::IfOp, scf::ForOp>(&op)) {
+          auto result = traverse(&op, callback);
+          if (failed(result))
+            return result;
+        } else {
+          auto result = callback(&op);
+          if (failed(result))
+            return result;
+        }
+      }
+    }
+  }
+  return callback(currOp);
+}
 //===----------------------------------------------------------------------===//
 // WarpSchedule
 //===----------------------------------------------------------------------===//
@@ -136,18 +157,22 @@ FailureOr<WarpSchedule> WarpSchedule::deserialize(scf::ForOp loop) {
         std::make_unique<Partition>(idx, stage.getInt()));
   }
 
-  for (Operation &op : loop.getBody()->without_terminator()) {
+  auto travResult = traverse(loop, [&](Operation *op) -> LogicalResult {
     Partition *partition = result.getRootPartition();
-    if (auto attr = op.getAttrOfType<IntegerAttr>(kPartitionAttrName)) {
+    if (auto attr = op->getAttrOfType<IntegerAttr>(kPartitionAttrName)) {
       int64_t idx = attr.getInt();
       if (idx < 0 || idx >= result.partitions.size()) {
-        return mlir::emitWarning(op.getLoc(), "invalid partition index ")
+        return mlir::emitWarning(op->getLoc(), "invalid partition index ")
                << idx;
       }
       partition = result.partitions[idx].get();
     }
-    result.insert(partition, &op);
-  }
+    result.insert(partition, op);
+    return success();
+  });
+
+  if (failed(travResult))
+    return travResult;
 
   return result;
 }
@@ -155,14 +180,15 @@ FailureOr<WarpSchedule> WarpSchedule::deserialize(scf::ForOp loop) {
 void WarpSchedule::serialize(scf::ForOp loop) const {
   SmallVector<Attribute> stages;
   Builder b(loop.getContext());
-  for (Operation &op : loop.getBody()->without_terminator()) {
-    if (Partition *partition = opToPartition.lookup(&op)) {
-      if (partition == getRootPartition())
-        continue;
-      op.setAttr(kPartitionAttrName,
-                 b.getI32IntegerAttr(partition->getIndex()));
+  auto _ = traverse(loop, [&](Operation *op) {
+    if (Partition *partition = opToPartition.lookup(op)) {
+      if (partition != getRootPartition()) {
+        op->setAttr(kPartitionAttrName,
+                    b.getI32IntegerAttr(partition->getIndex()));
+      }
     }
-  }
+    return success();
+  });
   for (Partition &partition : getPartitions())
     stages.push_back(b.getI32IntegerAttr(partition.getStage()));
   loop->setAttr(kPartitionStagesAttrName, b.getArrayAttr(stages));
@@ -254,25 +280,23 @@ void WarpSchedule::iterateInputs(
     scf::ForOp loop, const Partition *partition,
     function_ref<void(OpOperand &)> callback) const {
   for (Operation *op : partition->getOps()) {
-    visitNestedOperands(op, [&](OpOperand &operand) {
-      // Ignore implicit captures.
-      Value value = operand.get();
-      if (value.getParentBlock() != loop.getBody())
-        return;
-      if (auto arg = dyn_cast<BlockArgument>(value)) {
-        assert(arg.getOwner() == loop.getBody());
-        // Ignore the induction variable.
-        if (arg == loop.getInductionVar())
-          return;
-        // This value originates from a previous iteration.
-        assert(llvm::is_contained(loop.getRegionIterArgs(), arg));
-        callback(operand);
-      } else if (getPartition(value.getDefiningOp()) != partition) {
-        // This value originates from a different partition in the same
-        // iteration.
-        assert(value.getDefiningOp()->getParentOp() == loop);
-        callback(operand);
+    auto _ = traverse(op, [&](Operation *op) {
+      for (OpOperand &operand : op->getOpOperands()) {
+        //  Ignore implicit captures.
+        Value value = operand.get();
+        if (value.getParentRegion()->isProperAncestor(&loop.getBodyRegion()))
+          continue;
+        if (auto arg = dyn_cast<BlockArgument>(value)) {
+          // Ignore the induction variable.
+          if (arg == loop.getInductionVar())
+            continue;
+          // This value originates from a previous iteration.
+          callback(operand);
+        } else if (getPartition(value.getDefiningOp()) != partition) {
+          callback(operand);
+        }
       }
+      return success();
     });
   }
 }

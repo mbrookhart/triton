@@ -32,6 +32,7 @@ struct AutomaticWarpSpecialization
 } // namespace
 
 void AutomaticWarpSpecialization::runOnOperation() {
+  llvm::errs() << getOperation() << '\n';
   OpPassManager pm;
   pm.addPass(createTritonGPUPartitionScheduling());
   pm.addPass(createTritonGPULoadMMASpecialization({numStages}));
