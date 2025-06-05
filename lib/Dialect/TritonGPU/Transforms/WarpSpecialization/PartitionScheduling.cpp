@@ -8,6 +8,7 @@
 #include "triton/Dialect/TritonGPU/Transforms/PipeliningUtility.h"
 #include "triton/Dialect/TritonGPU/Transforms/Utility.h"
 #include "triton/Dialect/TritonNvidiaGPU/IR/Dialect.h"
+#include "llvm/Support/LogicalResult.h"
 
 using namespace mlir;
 using namespace triton;
@@ -157,69 +158,69 @@ static std::optional<WarpSchedule> getInitialSchedule(scf::ForOp loop) {
   Partition *mmaPartition = schedule.addPartition(1);
   Partition *loadPartition = schedule.addPartition(0);
 
-  // Find loads to pipeline.
+  // Find Loads and MMAs to pipeline.
   SmallVector<Operation *> loadsAndAllocs;
-  for (Operation &op : loop.getOps()) {
-    // Only TMA loads are supported at the moment.
-    if (!isa<DescriptorLoadOp, DescriptorGatherOp>(op))
-      continue;
-    schedule.trySchedule(loadPartition, &op);
-    loadsAndAllocs.push_back(&op);
-
-    // Local alloc users of the load with matching encoding will cause the
-    // underlying buffer to be pass through. Keep track of them.
-    SharedEncodingTrait sharedEnc = getSharedEncoding(&op);
-    for (Operation *user : op.getUsers()) {
-      if (auto alloc = dyn_cast<LocalAllocOp>(user)) {
-        if (sharedEnc == alloc.getType().getEncoding()) {
-          schedule.trySchedule(loadPartition, alloc);
-          loadsAndAllocs.push_back(alloc);
-        }
-      } else if (isa<ttng::TMEMAllocOp>(user)) {
-        schedule.trySchedule(loadPartition, user);
-        loadsAndAllocs.push_back(user);
-      }
-    }
-  }
-
-  // Find MMAs to pipeline.
   SmallVector<ttng::MMAv5OpInterface> mmas;
-  for (auto mmaOp : loop.getOps<ttng::MMAv5OpInterface>()) {
-    schedule.trySchedule(mmaPartition, mmaOp);
-    mmas.push_back(mmaOp);
 
-    // If the store is unrelated to the use of the MMA, then it gets placed in
-    // the MMA partition.
-    auto storeOp = dyn_cast_or_null<ttng::TMEMStoreOp>(
-        findDefOpInLoop(loop, mmaOp.getAccDep()));
-    if (!ttng::hasAccReadModifyWrite(mmaOp, loop) && storeOp &&
-        loop.isDefinedOutsideOfLoop(storeOp.getSrc()))
-      schedule.trySchedule(mmaPartition, storeOp);
+  auto _ = traverse(loop, [&](Operation *op) {
+    // Only TMA loads are supported at the moment.
+    if (isa<DescriptorLoadOp, DescriptorGatherOp>(op)) {
+      schedule.trySchedule(loadPartition, op);
+      loadsAndAllocs.push_back(op);
 
-    // Look for views into the operands.
-    SmallVector<Operation *> operandViews;
-    for (Value operand : mmaOp->getOperands()) {
-      if (Operation *defOp = operand.getDefiningOp())
-        operandViews.push_back(defOp);
-    }
-    while (!operandViews.empty()) {
-      Operation *op = operandViews.pop_back_val();
-      if (!op->hasOneUse() || !op->hasTrait<OpTrait::MemDescViewTrait>())
-        continue;
-
-      // Duplicate the op if necessary to ensure the MMA op is the only user.
-      if (!llvm::all_of(op->getUsers(),
-                        [&](Operation *user) { return user == mmaOp; })) {
-        Operation *viewOp = OpBuilder(op).clone(*op);
-        mmaOp->replaceUsesOfWith(op->getResult(0), viewOp->getResult(0));
-        op = viewOp;
+      // Local alloc users of the load with matching encoding will cause the
+      // underlying buffer to be pass through. Keep track of them.
+      SharedEncodingTrait sharedEnc = getSharedEncoding(op);
+      for (Operation *user : op->getUsers()) {
+        if (auto alloc = dyn_cast<LocalAllocOp>(user)) {
+          if (sharedEnc == alloc.getType().getEncoding()) {
+            schedule.trySchedule(loadPartition, alloc);
+            loadsAndAllocs.push_back(alloc);
+          }
+        } else if (isa<ttng::TMEMAllocOp>(user)) {
+          schedule.trySchedule(loadPartition, user);
+          loadsAndAllocs.push_back(user);
+        }
       }
-
-      schedule.trySchedule(mmaPartition, op);
-      if (Operation *defOp = op->getOperand(0).getDefiningOp())
-        operandViews.push_back(defOp);
     }
-  }
+    if (auto mmaOp = dyn_cast<ttng::MMAv5OpInterface>(op)) {
+      schedule.trySchedule(mmaPartition, mmaOp);
+      mmas.push_back(mmaOp);
+
+      // If the store is unrelated to the use of the MMA, then it gets placed in
+      // the MMA partition.
+      auto storeOp = dyn_cast_or_null<ttng::TMEMStoreOp>(
+          findDefOpInLoop(loop, mmaOp.getAccDep()));
+      if (!ttng::hasAccReadModifyWrite(mmaOp, loop) && storeOp &&
+          loop.isDefinedOutsideOfLoop(storeOp.getSrc()))
+        schedule.trySchedule(mmaPartition, storeOp);
+
+      // Look for views into the operands.
+      SmallVector<Operation *> operandViews;
+      for (Value operand : mmaOp->getOperands()) {
+        if (Operation *defOp = operand.getDefiningOp())
+          operandViews.push_back(defOp);
+      }
+      while (!operandViews.empty()) {
+        Operation *op = operandViews.pop_back_val();
+        if (!op->hasOneUse() || !op->hasTrait<OpTrait::MemDescViewTrait>())
+          continue;
+
+        // Duplicate the op if necessary to ensure the MMA op is the only user.
+        if (!llvm::all_of(op->getUsers(),
+                          [&](Operation *user) { return user == mmaOp; })) {
+          Operation *viewOp = OpBuilder(op).clone(*op);
+          mmaOp->replaceUsesOfWith(op->getResult(0), viewOp->getResult(0));
+          op = viewOp;
+        }
+
+        schedule.trySchedule(mmaPartition, op);
+        if (Operation *defOp = op->getOperand(0).getDefiningOp())
+          operandViews.push_back(defOp);
+      }
+    }
+    return llvm::success();
+  });
 
   // If there are no loads or MMAs, don't warp specialize.
   if (loadsAndAllocs.empty() && mmas.empty())

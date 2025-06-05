@@ -24,6 +24,10 @@ static constexpr char kPartitionStagesAttrName[] = "ttg.partition.stages";
 //===----------------------------------------------------------------------===//
 
 namespace mlir::triton::gpu {
+
+LogicalResult traverse(mlir::Operation *currOp,
+                       std::function<LogicalResult(Operation *)> callback);
+
 // A partition has a stage and contains some operation. The stage of a
 // partition determines how many cycles the partition's outputs are buffered
 // relative to its consumers.
