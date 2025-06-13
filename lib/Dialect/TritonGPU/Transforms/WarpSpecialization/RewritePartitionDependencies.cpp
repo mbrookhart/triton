@@ -28,185 +28,22 @@ static Operation *getEarliestUser(ArrayRef<OpOperand *> uses) {
 }
 
 //===----------------------------------------------------------------------===//
-// Multiplicity
-//===----------------------------------------------------------------------===//
-
-namespace {
-// Partition results are passed into future loop iterations through the region
-// iter args of the loop. However, a specific block argument's SSA users could
-// belong to multiple partitions or another `scf.yield`, where it is passed into
-// another future iterations. Tracing forward the uses of a partition output
-// creates a tree where each branch represents a series of block arguments and
-// their corresponding initial values. Each use of the output in a future
-// iteration is somewhere along the tree. To codegen the right initial values,
-// the tree is flattened such that only the root node has multiple children.
-//
-// Consider:
-//
-//   for ... iter_args(%arg0 = %init0, %arg1 = %init1, %arg2 = %init2)
-//     %output = f() {partition = 0}
-//     use(%arg0)    {partition = 1}
-//     use(%arg0)    {partition = 2}
-//     use(%arg1)    {partition = 3}
-//     use(%arg2)    {partition = 4}
-//     yield %output, %arg0, %arg0
-//
-// The first iteration of partitions 1 and 2 must read `%init0` for the i+1
-// value of `%output`, but partitions 2 and 3 read `%init1` and `%init2`
-// respectively as the i+2 values of `%output`.
-//
-// The corresponding tree is:
-//
-//   %output (root) -> %arg0 -> %arg1
-//                         \--> %arg2
-//
-struct Multiplicity {
-  // A node in the multiplicity tree, representing a region iter arg.
-  struct Node {
-    // The index of the region iter arg.
-    unsigned argIdx = -1;
-    // The depth of the node in the tree, which actually represents the
-    // distance.
-    unsigned depth = 0;
-    // The children nodes, i.e. the region iter args whose values are derived
-    // from this iter arg.
-    llvm::SmallSetVector<Node *, 2> children;
-
-    // This value is set later but represents the branch index of the flattened
-    // tree that this node belongs to.
-    int number = -1;
-  };
-
-  // Get or create a node in the tree for the given region iter index and at a
-  // certain depth (distance).
-  Node *getOrCreate(unsigned idx, unsigned depth);
-  // Add nodes to the multiplicity tree given uses of an output at a paritition
-  // and distance.
-  void add(ArrayRef<OpOperand *> uses, unsigned distance, scf::YieldOp yield);
-
-  // The total branch depth is the number of nodes in the flattened tree, and
-  // the number of extra buffers needed.
-  unsigned getTotalBranchDepth();
-  // Flatten the tree by assigning each node to a branch. A callback is invoked
-  // for each branch and the start and end indices of the nodes along that
-  // branch.
-  void number(
-      function_ref<void(ArrayRef<Node *>, unsigned, unsigned)> branchCallback);
-
-  // The root node, which represents the partition output itself.
-  std::unique_ptr<Node> root = std::make_unique<Node>();
-  // All the nodes in the tree, mapped by region iter arg index.
-  llvm::MapVector<unsigned, std::unique_ptr<Node>> nodes;
-  // Map from branch index to buffer start and end index, populated by `number`.
-  SmallVector<std::pair<unsigned, unsigned>> segments;
-};
-} // namespace
-
-Multiplicity::Node *Multiplicity::getOrCreate(unsigned idx, unsigned depth) {
-  std::unique_ptr<Node> &node = nodes[idx];
-  if (!node) {
-    node = std::make_unique<Node>();
-    node->argIdx = idx;
-    node->depth = depth;
-  }
-  // Check that the node is consistent.
-  assert(node->depth == depth && "conflicting node");
-  return node.get();
-}
-
-// A partition output used a future iteration could get carried as an iter arg
-// that is used in two different partitions. Consider:
-//
-//   scf.for %i = %lb to %ub step %step (%arg = %init)
-//     %next = op_c()   {ttg.partition = 0}
-//     op_a(%arg)       {ttg.partition = 1}
-//     op_b(%arg)       {ttg.partition = 2}
-//     scf.yield %next
-//
-// Output `%next` is used in partitions #1 and #2 but through the same arg.
-void Multiplicity::add(ArrayRef<OpOperand *> uses, unsigned distance,
-                       scf::YieldOp yield) {
-  for (OpOperand *use : uses) {
-    OpOperand *curUse = use;
-    SmallVector<unsigned> trace;
-    for (unsigned d = distance; d; --d) {
-      auto arg = cast<BlockArgument>(curUse->get());
-      unsigned idx = arg.getArgNumber() - 1;
-      trace.push_back(idx);
-      curUse = &yield.getResultsMutable()[idx];
-    }
-    Multiplicity::Node *parent = root.get();
-    for (auto [depth, idx] : llvm::enumerate(llvm::reverse(trace))) {
-      Multiplicity::Node *node = getOrCreate(idx, depth + 1);
-      parent->children.insert(node);
-      parent = node;
-    }
-  }
-}
-
-void Multiplicity::number(
-    function_ref<void(ArrayRef<Node *>, unsigned, unsigned)> branchCallback) {
-  // Depth-first traversal of the tree. Each new branch is assigned to an
-  // incremented branch index. Thus, the "flattened" tree is virtual and isn't
-  // bigger than the actual tree.
-  SmallVector<Node *> dfs;
-  dfs.push_back(root.get());
-  int number = 0;
-  unsigned segmentStart = 0;
-  // Keep the traceback of the nodes along the virtual branch.
-  SmallVector<Node *> trace;
-  while (!dfs.empty()) {
-    Node *node = dfs.pop_back_val();
-    trace.push_back(node);
-    // Assign the branch index.
-    node->number = number;
-    llvm::append_range(dfs, node->children);
-
-    // If there are no children, we know we reached the end of a branch.
-    if (node->children.empty()) {
-      // Save the segment indices.
-      segments.emplace_back(segmentStart, segmentStart + node->depth);
-      auto [start, end] = segments.back();
-      assert(node->depth == trace.size() - 1);
-      // Don't include the root.
-      branchCallback(ArrayRef(trace).drop_front(), start, end);
-
-      // Move to the next branch.
-      segmentStart += node->depth;
-      ++number;
-      if (!dfs.empty())
-        trace.resize(dfs.back()->depth);
-    }
-  }
-}
-
-unsigned Multiplicity::getTotalBranchDepth() {
-  unsigned multiplicitySize = 0;
-  for (Multiplicity::Node &node :
-       llvm::make_pointee_range(llvm::make_second_range(nodes))) {
-    if (node.children.empty())
-      multiplicitySize += node.depth;
-  }
-  return multiplicitySize;
-}
-
-//===----------------------------------------------------------------------===//
 // UseInfo
 //===----------------------------------------------------------------------===//
 
 namespace {
 // Use information for a partition SSA output.
 struct UseInfo {
-  // Get the maximum distance to a use, according for stage and iteration, given
-  // the partition where the value is defined.
+  // Get the maximum distance to a use, according for stage and iteration,
+  // given the partition where the value is defined.
   int getMaxUseDistance(const Partition &partitition);
 
   // Map from partition and distance to the uses in that partition.
   llvm::MapVector<std::pair<Partition *, unsigned>, SmallVector<OpOperand *>>
       consumers;
-  // The multiplicity tree of the output.
-  Multiplicity multiplicity;
+  llvm::MapVector<Partition *, unsigned> multiplicitySize;
 };
+
 } // namespace
 
 int UseInfo::getMaxUseDistance(const Partition &partition) {
@@ -218,7 +55,6 @@ int UseInfo::getMaxUseDistance(const Partition &partition) {
   }
   return maxDistance;
 }
-
 //===----------------------------------------------------------------------===//
 // AsyncRef
 //===----------------------------------------------------------------------===//
@@ -300,14 +136,18 @@ void DependencyRewriter::resolveOutputMultiplicity(
         continue;
       }
       // We have uses of a value in a future iteration.
-      info.multiplicity.add(uses, distance, yield);
+      if (info.multiplicitySize.contains(usePartition)) {
+        info.multiplicitySize[usePartition] += distance;
+      } else {
+        info.multiplicitySize.insert({usePartition, distance});
+      }
     }
   }
 }
 
 AsyncRef DependencyRewriter::allocateAsyncValue(RankedTensorType tensorType,
-                                                unsigned multiplicitySize,
-                                                unsigned maxDistance) {
+                                                unsigned maxDistance,
+                                                unsigned multiplicitySize) {
   OpBuilder::InsertionGuard guard(b);
   b.setInsertionPoint(loop);
   unsigned numBars = multiplicitySize + maxDistance;
@@ -325,8 +165,8 @@ AsyncRef DependencyRewriter::allocateAsyncValue(RankedTensorType tensorType,
                   getBufferViewType(allocType)};
 }
 
-// Initialize the barriers for a particular buffer. If there is an initial value
-// for the buffer, store it and mark the buffer as ready to be consumed.
+// Initialize the barriers for a particular buffer. If there is an initial
+// value for the buffer, store it and mark the buffer as ready to be consumed.
 void DependencyRewriter::initializeBarriers(int index, const AsyncRef &aref,
                                             unsigned numConsumers, Value init) {
   OpBuilder::InsertionGuard guard(b);
@@ -412,7 +252,8 @@ LogicalResult DependencyRewriter::run() {
        llvm::zip(schedule.getPartitions(), partitionUseInfo)) {
     // The amount of buffering is based on the longest distance to a user.
     for (auto &[output, info] : useInfo) {
-      // FIXME: No IR support for passing simple scalars through shared memory.
+      // FIXME: No IR support for passing simple scalars through shared
+      // memory.
       auto tensorType = dyn_cast<RankedTensorType>(output.getType());
       if (!tensorType) {
         return mlir::emitWarning(output.getLoc(),
@@ -425,27 +266,20 @@ LogicalResult DependencyRewriter::run() {
       int maxDistance = info.getMaxUseDistance(partition);
       // Number the branches of the multiplicity tree. The total number of
       // required buffers includes the lengths of all branches.
-      int multiplicitySize = info.multiplicity.getTotalBranchDepth();
+      int multiplicitySize = info.multiplicitySize[&partition];
 
       // Allocate buffers for the value and its associated barriers.
       b.setLoc(output.getLoc());
       ImplicitLocOpBuilder endBuilder(b.getLoc(), loop->getNextNode());
       AsyncRef aref =
-          allocateAsyncValue(tensorType, multiplicitySize, maxDistance);
+          allocateAsyncValue(tensorType, maxDistance, multiplicitySize);
 
       // Initialize the initial values of the loop-carried dependencies.
       unsigned numConsumers = info.consumers.size();
-      info.multiplicity.number([&](ArrayRef<Multiplicity::Node *> nodes,
-                                   unsigned start, unsigned end) {
-        for (auto [i, node] : llvm::zip(llvm::seq(start, end), nodes)) {
-          initializeBarriers(i, aref, numConsumers,
-                             loop.getInitArgs()[node->argIdx]);
-        }
-      });
 
       // Initialize the buffers.
-      for (auto i : llvm::seq(maxDistance)) {
-        initializeBarriers(multiplicitySize + i, aref, numConsumers,
+      for (auto i : llvm::seq(maxDistance + multiplicitySize)) {
+        initializeBarriers(i * multiplicitySize, aref, numConsumers,
                            /*init=*/Value());
       }
       // Deallocate shared memory after the buffers are deinitialized.
@@ -459,26 +293,7 @@ LogicalResult DependencyRewriter::run() {
             loop.getBody()->findAncestorOpInBlock(*earliestUser));
 
         auto [usePartition, distance] = key;
-        auto modifyStart = [&, distance = distance, uses = uses, info = &info](
-                               int &startIdx, Value &cnd, Value idx) {
-          if (distance == 0)
-            return;
-          unsigned argIdx =
-              cast<BlockArgument>(uses.front()->get()).getArgNumber() - 1;
-          Multiplicity::Node *node =
-              info->multiplicity.nodes.find(argIdx)->second.get();
-          auto [start, end] = info->multiplicity.segments[node->number];
-          startIdx = end - node->depth;
-          assert(node->depth && startIdx >= start && "incorrect numbering?");
-          // Micro-optimization: if the index would roll onto
-          // `multiplicitySize` anyways, skip generating the check.
-          if (end != multiplicitySize) {
-            Value initEnd = b.create<arith::CmpIOp>(arith::CmpIPredicate::eq,
-                                                    idx, b.intCst(end));
-            cnd = b.create<arith::OrIOp>(cnd, initEnd);
-          }
-        };
-        auto [idx, phase] = createAndGetAsyncIndex(aref, modifyStart);
+        auto [idx, phase] = createAndGetAsyncIndex(aref);
 
         // Wait for the value to be available.
         auto [view, readyView, emptyView] = aref.getView(b, idx);
@@ -556,8 +371,8 @@ struct RewritePartitionDependencies
 } // namespace
 
 void RewritePartitionDependencies::runOnOperation() {
-  // Collect for loops to warp specialize. This pass expects the loop to already
-  // be scheduled.
+  // Collect for loops to warp specialize. This pass expects the loop to
+  // already be scheduled.
   SmallVector<scf::ForOp> loops;
   getOperation().walk([&](scf::ForOp loop) {
     if (loop->hasAttrOfType<ArrayAttr>(kPartitionStagesAttrName))
