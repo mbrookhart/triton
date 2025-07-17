@@ -1142,4 +1142,5 @@ def bench(Z, H, N_CTX, HEAD_DIM, causal, provider):
 
 
 if __name__ == "__main__":
-    bench.run(save_path=".", print_data=True)
+    # bench.run(save_path=".", print_data=True)
+    test_op(1, 32, 4 * 1024, 64, False, torch.float16)
